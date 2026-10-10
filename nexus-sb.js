@@ -326,7 +326,7 @@
   function screen(inner) {
     let w = document.getElementById('nxAuth');
     if (!w) { w = document.createElement('div'); w.id = 'nxAuth'; w.className = 'nxa'; document.body.append(w); }
-    w.innerHTML = `<form class="box" autocomplete="on" novalidate><div class="hz"></div><div class="logo"><img alt="" src="${logoSrc()}"><h1>Demo <span>Nexus</span></h1></div>${inner}</form>`;
+    w.innerHTML = `<form class="box" autocomplete="on" novalidate><div class="hz"></div><div class="logo"><img alt="" src="${logoSrc()}"><h1>NEXUS <span style="display:block;font-size:.56em;letter-spacing:.05em">Construction Manager</span></h1></div>${inner}</form>`;
     const fm = w.querySelector('form'); addEyes(fm); return fm;
   }
   const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -513,6 +513,10 @@
     session = s;
     try { await loadProfile(); } catch (e) { blockedScreen('Could not reach the NEXUS server. Check the internet connection and reload.'); throw e; }
     if (CLOUD && profile && !profile.pending && !(profile.company && profile.company.open)) { companyClosedScreen(profile.company); throw new Error('company'); }
+    if (CLOUD && profile?.company) {   // one app for many companies: show this company's own name
+      try { if (typeof DEFAULT_COMPANY !== 'undefined' && !DEFAULT_COMPANY.name) { DEFAULT_COMPANY.name = profile.company.name; DEFAULT_COMPANY.short = profile.company.name; } } catch (_) {}
+      const bs = document.querySelector('.brand span'); if (bs) bs.textContent = profile.company.name;
+    }
     if (profile && profile.pending) { waitingScreen(profile.name); throw new Error('pending'); }
     if (!profile || !profile.active) { blockedScreen('Your login is not active in NEXUS. Contact an administrator.'); throw new Error('inactive'); }
     if (session.user.user_metadata?.must_change_password) await newPasswordScreen(true);
