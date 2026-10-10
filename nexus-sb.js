@@ -4,6 +4,7 @@
 (function () {
   'use strict';
   const CFG = window.NEXUS_CONFIG || {};
+  const CLOUD = !!CFG.cloud;   // NEXUS Cloud: many companies in one system (database v300)
   const sb = window.supabase.createClient(CFG.url, CFG.key, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'nexus-auth' }
   });
@@ -50,7 +51,7 @@
   function ensureChannel() {
     if (channel) return;
     channel = sb.channel('nexus-docs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'docs' }, p => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: CLOUD ? 'docs_all' : 'docs' }, p => {
         if (p.eventType === 'DELETE') { const o = p.old || {}; if (o.col) applyRow(o.col, o.id, null); }
         else { const n = p.new || {}; if (n.col) applyRow(n.col, n.id, n.data); }
       })
@@ -127,7 +128,7 @@
         async get() { return docSnap(id, await fetchDoc(col, id)); },
         async set(obj) {
           const data = clean(obj);
-          const { error } = await sb.from('docs').upsert({ col, id, data });
+          const { error } = await sb.from('docs').upsert({ col, id, data }, CLOUD ? { onConflict: 'tenant_id,col,id' } : undefined);
           if (error) throw mapErr(error);
           applyRow(col, id, data);
         },
@@ -301,6 +302,7 @@
   .nxa h1{font:700 30px/1 "Barlow Condensed",Arial,sans-serif;letter-spacing:.04em;margin:0;text-transform:uppercase}
   .nxa h1 span{color:#539FDC}.nxa p{margin:0;color:#5A6580;font-size:13px}
   .nxa label{font-size:12px;font-weight:600;color:#5A6580;display:flex;flex-direction:column;gap:4px}
+  .nxa .seg2{display:flex;gap:6px}.nxa .seg2 label{flex:1;flex-direction:row;align-items:center;gap:6px;border:1px solid #D4DAE3;border-radius:6px;padding:8px;color:#182340;cursor:pointer}.nxa .seg2 label:has(input:checked){border-color:#2E75B6;background:#EEF3FA}
   .nxa input,.nxa select{font:inherit;border:1px solid #D4DAE3;border-radius:6px;padding:9px 11px;background:#fff;color:#182340}
   .nxa button{font:inherit;cursor:pointer;border-radius:6px;padding:10px 14px;border:1px solid #D4DAE3;background:#fff;color:#182340}
   .nxa button.pri{background:#539FDC;border-color:#539FDC;color:#0E1830;font-weight:600}
@@ -366,6 +368,10 @@
   function registerScreen() {
     return new Promise(res => {
       const f = screen(`<p><b>Sign up.</b> Fill in your details and choose a password. An administrator approves your sign-up before you can open NEXUS.</p>
+        ${CLOUD ? `<div class="seg2" role="radiogroup" aria-label="Sign-up type"><label><input type="radio" name="kind" value="join" checked> Join my company</label><label><input type="radio" name="kind" value="new"> Register a new company</label></div>
+        <label data-k="join">Company code <span class="small" style="opacity:.7">(ask your NEXUS administrator)</span><input name="code" autocomplete="off" placeholder="e.g. 7F3K9Q2A" style="text-transform:uppercase"></label>
+        <label data-k="new" hidden>Company name<input name="company" autocomplete="organization" placeholder="Registered name of the company"></label>
+        <label data-k="new" hidden>Country<input name="country" value="Tanzania" autocomplete="country-name"></label>` : ''}
         <label>Full name<input name="name" required autocomplete="name"></label>
         <label>Work email<input name="email" type="email" required autocomplete="email"></label>
         <label>Position<input name="position" placeholder="e.g. Site Engineer, QS, Storekeeper"></label>
@@ -376,21 +382,27 @@
         <button class="pri" type="submit">Sign up</button>
         <button class="lnk" type="button" data-back>Back to sign in</button>`);
       f.elements.namedItem('name').focus();
+      const kind = () => (CLOUD ? (f.querySelector('input[name=kind]:checked')?.value || 'join') : 'join');
+      if (CLOUD) f.querySelectorAll('input[name=kind]').forEach(r => r.onchange = () => { f.querySelectorAll('[data-k]').forEach(el => { el.hidden = el.dataset.k !== kind(); });
+        f.querySelector('p').innerHTML = kind() === 'new' ? '<b>Register your company.</b> You become its first administrator. The NEXUS team checks the request and opens your company – usually within one working day.' : '<b>Sign up.</b> Fill in your details and choose a password. An administrator approves your sign-up before you can open NEXUS.'; });
       f.querySelector('[data-back]').onclick = () => loginScreen().then(res);
       f.onsubmit = async e => {
         e.preventDefault();
         const v = k => f.elements.namedItem(k).value.trim(), er = f.querySelector('.err');
+        if (CLOUD && kind() === 'join' && !/^[A-Za-z0-9]{6,12}$/.test(v('code'))) { er.textContent = 'Enter the company code from your administrator.'; return; }
+        if (CLOUD && kind() === 'new' && v('company').length < 3) { er.textContent = 'Enter the name of your company.'; return; }
         if (v('name').length < 3) { er.textContent = 'Enter your full name.'; return; }
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v('email'))) { er.textContent = 'Enter a valid email.'; return; }
         if (f.p1.value.length < 10) { er.textContent = 'Use at least 10 characters for the password.'; return; }
         if (f.p1.value !== f.p2.value) { er.textContent = 'The two passwords are different.'; return; }
         const b = f.querySelector('button.pri'); b.disabled = true; b.textContent = 'Sending…';
         const { data, error } = await sb.auth.signUp({ email: v('email').toLowerCase(), password: f.p1.value,
-          options: { data: { name: v('name'), position: v('position'), phone: v('phone') } } });
+          options: { data: { name: v('name'), position: v('position'), phone: v('phone'),
+            ...(CLOUD ? (kind() === 'new' ? { new_company: v('company'), country: v('country') } : { company_code: v('code').toUpperCase() }) : {}) } } });
         b.disabled = false; b.textContent = 'Sign up';
         if (error) { er.textContent = /registered|exists/i.test(error.message) ? 'This email is already signed up. Sign in, or ask an administrator.' : /signups? not allowed|disabled/i.test(error.message) ? 'Self-registration is switched off. Ask an administrator.' : error.message; return; }
         if (data.session) await sb.auth.signOut({ scope: 'local' });
-        waitingScreen(v('name'));
+        if (CLOUD && kind() === 'new') companyWaitScreen(v('name'), v('company')); else waitingScreen(v('name'));
       };
     });
   }
@@ -399,6 +411,27 @@
       <p>Your sign-up has been sent to the administrators. You will be able to sign in with your email and password as soon as it is approved.</p>
       <button class="pri" type="button">Back to sign in</button>`);
     f.querySelector('button').onclick = async () => { await sb.auth.signOut({ scope: 'local' }); location.reload(); };
+  }
+  function companyWaitScreen(name, company) {
+    const f = screen(`<p><b>Thank you${name ? ', ' + h(name.split(' ')[0]) : ''}.</b></p>
+      <p>The request for <b>${h(company || 'your company')}</b> has been sent to the NEXUS team. When the company is opened you sign in with your email and password and add your staff.</p>
+      <button class="pri" type="button">Back to sign in</button>`);
+    f.querySelector('button').onclick = async () => { await sb.auth.signOut({ scope: 'local' }); location.reload(); };
+  }
+  function companyClosedScreen(c) {
+    const st = c?.status, late = st === 'active' || st === 'trial';
+    const msg = !c ? 'Your login is not linked to a company yet. Ask your NEXUS administrator for the company code.'
+      : st === 'pending' ? `<b>${h(c.name)}</b> is waiting for approval by the NEXUS team. You will be able to sign in as soon as it is opened.`
+      : st === 'trial' ? `The free trial of <b>${h(c.name)}</b> ended on ${h(c.trial_until || '')}. Choose a plan to continue – all your records are kept.`
+      : late ? `The NEXUS subscription of <b>${h(c.name)}</b> ended on ${h(c.paid_until || '')}. Renew to continue – all your records are kept.`
+      : `NEXUS is switched off for <b>${h(c.name)}</b>. Contact the NEXUS team.`;
+    const f = screen(`<p>${msg}</p>
+      ${late && profile?.role === 'admin' && window.NX_PAY ? '<button class="pri" type="button" data-pay>Pay now</button>' : ''}
+      ${profile?.platform ? '<button class="pri" type="button" data-plat>Open NEXUS Cloud – companies</button>' : ''}
+      <button class="lnk" type="button" data-out>Sign out</button>`);
+    f.querySelector('[data-out]').onclick = async () => { await sb.auth.signOut({ scope: 'local' }); location.reload(); };
+    f.querySelector('[data-pay]')?.addEventListener('click', () => window.NX_PAY(c));
+    f.querySelector('[data-plat]')?.addEventListener('click', () => openPlatform());
   }
   function newPasswordScreen(first) {
     return new Promise(res => {
@@ -443,6 +476,7 @@
     if (!s) s = await loginScreen();
     session = s;
     try { await loadProfile(); } catch (e) { blockedScreen('Could not reach the NEXUS server. Check the internet connection and reload.'); throw e; }
+    if (CLOUD && profile && !profile.pending && !(profile.company && profile.company.open)) { companyClosedScreen(profile.company); throw new Error('company'); }
     if (profile && profile.pending) { waitingScreen(profile.name); throw new Error('pending'); }
     if (!profile || !profile.active) { blockedScreen('Your login is not active in NEXUS. Contact an administrator.'); throw new Error('inactive'); }
     if (session.user.user_metadata?.must_change_password) await newPasswordScreen(true);
@@ -660,7 +694,7 @@
     const day = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
     await downloads.save({ filename: `nexus-photos-documents-${day}.zip`, data: makeZip(entries) });
     const status = { last_at: new Date().toISOString(), files: list.length - failed.length, failed: failed.length, bytes, by: profile?.email || '' };
-    await sb.from('docs').upsert({ col: 'system', id: 'files_backup', data: status }, { onConflict: 'col,id' });
+    await sb.from('docs').upsert({ col: 'system', id: 'files_backup', data: status }, { onConflict: CLOUD ? 'tenant_id,col,id' : 'col,id' });
     window.NX_FILES_BK = status;
     return status;
   }
@@ -713,12 +747,14 @@
       m.style.top = (r.bottom + 6) + 'px'; m.style.right = Math.max(8, innerWidth - r.right) + 'px';
       m.innerHTML = `<div class="who2"><b>${h(profile?.name || '')}</b><br><span style="opacity:.7">${h(session.user.email)} · ${h(ROLE_TXT[profile?.role] || '')}</span></div>
         ${profile?.role === 'admin' ? '<button data-m="users">Manage logins</button>' : ''}
+        ${CLOUD && profile?.platform ? '<button data-m="plat">NEXUS Cloud – companies</button>' : ''}
         <button data-m="pw">Change my password</button><button data-m="out">Sign out</button>`;
       m.onclick = async ev => {
         const k = ev.target.closest('[data-m]')?.dataset.m; if (!k) return; m.remove();
         if (k === 'out') { await sb.auth.signOut({ scope: 'local' }); location.reload(); }
         if (k === 'pw') { if (await newPasswordScreen(false)) window.toast?.('Password changed.'); }
         if (k === 'users') openUsers();
+        if (k === 'plat') openPlatform();
       };
       document.body.append(m);
       setTimeout(() => document.addEventListener('click', function off(ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('click', off); } }), 0);
@@ -730,6 +766,53 @@
     if (error) { let b = null; try { b = await error.context?.json(); } catch (_) {} throw new Error(b?.message || b?.error || error.message); }
     return data;
   }
+  // ---------- NEXUS Cloud: platform owner panel (companies, trials, payments, seats) ----------
+  async function openPlatform() {
+    closeScreen();
+    const w = document.createElement('div'); w.className = 'nxm';
+    w.innerHTML = '<div class="box" style="width:min(1100px,100%)"><p>Loading companies…</p></div>';
+    w.onclick = e => { if (e.target === w) w.remove(); };
+    document.body.append(w);
+    const box = w.querySelector('.box');
+    const ST = { pending: 'Waiting for approval', trial: 'Free trial', active: 'Active (paid)', suspended: 'Suspended', closed: 'Closed' };
+    const COL = { pending: '#F2A900', trial: '#2E75B6', active: '#2E8B57', suspended: '#C0392B', closed: '#7A869A' };
+    const day = (d, n) => { const x = new Date(d || Date.now()); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+    async function render() {
+      const { data, error } = await sb.rpc('nx_companies');
+      if (error) { box.innerHTML = `<p>${h(error.message)}</p><button class="btn sm" data-close>Close</button>`; box.querySelector('[data-close]').onclick = () => w.remove(); return; }
+      const L = data || [], n = k => L.filter(c => c.status === k).length;
+      box.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><h2 style="margin:0;font:700 21px var(--f-display,Arial);text-transform:uppercase">NEXUS Cloud – companies</h2><div style="flex:1"></div><button class="btn sm" data-close>Close</button></div>
+        <p class="small muted" style="margin:4px 0 10px">${L.length} companies · ${n('pending')} waiting · ${n('trial')} on trial · ${n('active')} paying · ${n('suspended')} suspended. Only you (platform owner) see this. You never see the companies' records.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Company</th><th>Contact</th><th>Status</th><th>Users</th><th>Trial until</th><th>Paid until</th><th>Seats</th><th>Notes</th><th></th></tr></thead><tbody>
+        ${L.map(c => `<tr data-cid="${h(c.id)}">
+          <td><b>${h(c.name)}</b><div class="small muted">${h(c.country || '')} · since ${h(String(c.created_at).slice(0, 10))}</div>${c.open ? '<span class="small" style="color:#2E8B57">● open</span>' : '<span class="small" style="color:#C0392B">● closed</span>'}</td>
+          <td class="small">${h(c.contact_name || '')}<div>${h(c.contact_email || '')}</div><div class="muted">${h(c.contact_phone || '')}</div></td>
+          <td><select data-f="status" aria-label="Status" style="border-left:4px solid ${COL[c.status] || '#999'}">${Object.keys(ST).map(k => `<option value="${k}"${k === c.status ? ' selected' : ''}>${ST[k]}</option>`).join('')}</select></td>
+          <td class="small">${c.users} active<div class="muted">${c.records} records</div></td>
+          <td><input type="date" data-f="trial" value="${h(c.trial_until || '')}" aria-label="Trial until"></td>
+          <td><input type="date" data-f="paid" value="${h(c.paid_until || '')}" aria-label="Paid until"></td>
+          <td><input type="number" min="1" max="999" data-f="seats" value="${h(c.seats)}" style="width:64px" aria-label="Seats"></td>
+          <td><input data-f="notes" value="${h(c.notes || '')}" placeholder="e.g. invoice 012, paid M-Pesa" aria-label="Notes"></td>
+          <td style="white-space:nowrap">${c.status === 'pending' ? `<button class="btn sm pri" data-quick="trial">Approve – 30-day trial</button> ` : ''}${c.status !== 'pending' ? `<button class="btn sm" data-quick="year">+1 year paid</button> ` : ''}<button class="btn sm pri" data-save>Save</button></td></tr>`).join('') || '<tr><td colspan="9">No companies yet. Companies appear here when someone chooses “Register a new company” on the sign-in page.</td></tr>'}
+        </tbody></table></div><p class="small" data-msg role="status"></p>`;
+      box.querySelector('[data-close]').onclick = () => w.remove();
+    }
+    box.addEventListener('click', async e => {
+      const tr = e.target.closest('tr[data-cid]'); const say = t => { const el = box.querySelector('[data-msg]'); if (el) el.textContent = t; };
+      if (!tr) return; const g = k => tr.querySelector(`[data-f="${k}"]`);
+      const q = e.target.closest('[data-quick]')?.dataset.quick;
+      if (q === 'trial') { g('status').value = 'trial'; if (!g('trial').value) g('trial').value = day(null, 30); }
+      if (q === 'year') { g('status').value = 'active'; g('paid').value = day(g('paid').value && g('paid').value > day(null, 0) ? g('paid').value : null, 365); }
+      if (!q && !e.target.closest('[data-save]')) return;
+      const args = { cid: tr.dataset.cid, new_status: g('status').value, trial: g('trial').value || null, paid: g('paid').value || null, new_plan: null, new_seats: +g('seats').value || null, note: g('notes').value };
+      const { error } = await sb.rpc('nx_company_set', args);
+      if (error) { say(error.message); return; }
+      await render(); say('Saved.');
+    });
+    render();
+  }
+  window.NX_OPEN_PLATFORM = () => openPlatform();
+
   async function openUsers() {
     const w = document.createElement('div'); w.className = 'nxm';
     w.innerHTML = '<div class="box"><p>Loading logins…</p></div>';
@@ -749,6 +832,7 @@
             <td><select data-aprole="${h(u.user_id)}" aria-label="Role">${Object.keys(ROLE_TXT).map(k => `<option value="${k}"${k === 'staff' ? ' selected' : ''}>${ROLE_TXT[k]}</option>`).join('')}</select></td>
             <td style="white-space:nowrap"><button class="btn sm pri" data-approve="${h(u.user_id)}">Approve</button> <button class="btn sm danger" data-reject="${h(u.user_id)}">Reject</button></td></tr>`).join('')}
           </tbody></table></div></div>` : ''; })()}
+        ${CLOUD && profile?.company?.join_code ? `<div style="background:#EEF3FA;border-radius:6px;padding:10px 12px"><b>Company code: <span style="font:700 18px monospace;letter-spacing:.12em">${h(profile.company.join_code)}</span></b><div class="small muted">Staff choose <i>Sign up → Join my company</i> on the sign-in page and type this code. You then approve them here.${profile.company.seats ? ` Your plan allows ${h(profile.company.seats)} active users.` : ''}</div></div>` : ''}
         <p class="small muted">Only administrators see this. Staff can sign up themselves from the sign-in page (Sign up); you approve them above. You can also add a login directly below with a temporary password – give it in person or by phone, not by email.</p>
         <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead><tbody>
         ${users.filter(u => !u.pending).map(u => `<tr style="${u.active ? '' : 'opacity:.55'}"><td>${h(u.name || '')}</td><td>${h(u.email || '')}</td><td>${roleSel(u.user_id, u.role)}</td>
