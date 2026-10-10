@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="nexus-build" content="260813de84d1">
+<meta name="nexus-build" content="e6c4516ea2b4">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.googleapis.com; media-src 'self' blob: https://*.supabase.co; frame-src 'none'; object-src 'none'">
 <link rel="manifest" href="manifest.webmanifest">
@@ -291,6 +291,7 @@ ul.clean li{margin:3px 0}
 .work-strip{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(240px,300px);gap:12px;overflow-x:auto;padding:14px 16px;scroll-snap-type:x mandatory}
 .work{margin:0;scroll-snap-align:start;position:relative;border-radius:6px;overflow:hidden;background:var(--panel2);aspect-ratio:4/3}
 .work img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.work-ed{position:absolute;top:8px;right:8px;width:32px;height:32px;border-radius:50%;border:0;background:rgba(14,24,48,.75);color:#fff;font-size:15px;cursor:pointer;opacity:.85}.work-ed:hover{opacity:1;background:var(--blue)}
 .work figcaption{position:absolute;left:0;right:0;bottom:0;padding:26px 12px 10px;background:linear-gradient(0deg,rgba(14,24,48,.9),rgba(14,24,48,0));color:#fff;display:flex;flex-direction:column;gap:1px}
 .work figcaption b{font:600 15px/1.15 var(--f-display);letter-spacing:.02em;text-transform:uppercase}
 .work figcaption span{font-size:11.5px;color:#C9D4E8}
@@ -5418,6 +5419,23 @@ NEXUS DATA:${JSON.stringify(snap)}`},{role:'assistant',content:'Understood. Ask 
 }
 /* ===================== HOME ===================== */
 const WORK = [['img/s1.jpg','Sample project – multi-storey building','Add your own project photos'],['img/s2.jpg','Sample project – road works','Add your own project photos'],['img/s3.jpg','Sample project – fit-out','Add your own project photos']];
+/* v217.9 · "Our work" on Home: administrators add, change and remove project photos and details (settings/work) */
+function workItems(){ const w=S.work; if(w&&Array.isArray(w.items)) return w.items; return WORK.map(([src,t,s],i)=>({id:'w'+i,src,t,s})); }
+function workImg(r,t){ return !r?'':/^(asset:|db:)/.test(r)?photoTag(r):`<img src="${esc(r)}" alt="${esc(t||'')}" loading="lazy" data-zoom>`; }
+async function workSave(items){ try{ await db.doc('settings/work').set({items,updated_at:new Date().toISOString(),updated_by:me.name||''}); logAct('Updated "Our work" on Home'); return true; }catch(e){ toast('Could not save: '+(e.message||e)); return false; } }
+function workEdit(id){ if(!isAdmin) return; const L=workItems().map(x=>({...x})); const i=id?L.findIndex(x=>x.id===id):-1; const cur=i>=0?L[i]:null;
+  formDrawer(cur?'Change project':'Add project to "Our work"',[
+    {k:'t',label:'Project name',req:1,full:1,ph:'e.g. CRDB Tegeta Branch'},
+    {k:'s',label:'Details (client, place, type of work)',full:1,ph:'e.g. Banking fit-out · Dar es Salaam'},
+    {k:'photo',label:cur?'Photo (add a new one to replace it)':'Photo',type:'photos'},
+    {k:'pos',label:'Position on the Home page (1 = first)',type:'number'}],
+    {t:cur?.t||'',s:cur?.s||'',photo:cur&&/^(asset:|db:)/.test(cur.src||'')?[cur.src]:[],pos:i>=0?i+1:L.length+1},
+    async v=>{ const ph=v.photo||[]; const src=ph.length?ph[ph.length-1]:(cur?.src||''); if(!src){ toast('Add a photo first.'); return false; }
+      const it={id:cur?.id||uid(),src,t:String(v.t||'').trim().slice(0,80),s:String(v.s||'').trim().slice(0,140)};
+      if(i>=0) L.splice(i,1); const p=Math.max(1,Math.min(L.length+1,parseInt(v.pos,10)||L.length+1)); L.splice(p-1,0,it);
+      return await workSave(L.slice(0,40)); },
+    {sub:'Home · Our work',saveLabel:cur?'Save':'Add project',onDelete:cur?async()=>{ L.splice(i,1); await workSave(L); }:null,delLabel:'Remove from Home',delMsg:'Remove this project from "Our work" on the Home page?'}); }
+document.addEventListener('click',e=>{ const b=e.target.closest('[data-work]'); if(!b) return; e.preventDefault(); e.stopPropagation(); const v=b.dataset.work; workEdit(v==='add'?null:v); },true);
 function pageHome(){
   const c=company(), open=openTenders();
   const hr=(new Date().getUTCHours()+3)%24, greet=hr<12?'Good morning':hr<17?'Good afternoon':'Good evening';
@@ -5448,8 +5466,8 @@ function pageHome(){
       :'<div class="empty">No open Pursue or Check tenders right now. New ones appear here automatically.</div>'}</div>
   </section>
   <section class="card">
-    <div class="hd"><h2>Our work</h2><span class="sub">Selected projects from the company profile</span></div>
-    <div class="work-strip">${WORK.map(([src,t,s])=>`<figure class="work"><img src="${src}" alt="${esc(t)}" loading="lazy" data-zoom><figcaption><b>${esc(t)}</b><span>${esc(s)}</span></figcaption></figure>`).join('')}</div>
+    <div class="hd"><h2>Our work</h2><span class="sub">Selected projects from the company profile</span><div class="sp" style="flex:1"></div>${isAdmin?'<button class="btn sm" data-work="add">＋ Add project</button>':''}</div>
+    ${workItems().length?`<div class="work-strip">${workItems().map(w=>`<figure class="work">${workImg(w.src,w.t)}<figcaption><b>${esc(w.t)}</b><span>${esc(w.s||'')}</span></figcaption>${isAdmin?`<button class="work-ed" data-work="${esc(w.id)}" title="Change or remove this project" aria-label="Change ${esc(w.t)}">✎</button>`:''}</figure>`).join('')}</div>`:`<div class="bd"><div class="empty">No projects on the Home page yet.${isAdmin?' Press <b>＋ Add project</b> to add a photo of your work.':''}</div></div>`}
   </section>
   <section class="facts">
     <div><b>Class I</b><span>Building contractor</span></div>
@@ -19821,6 +19839,7 @@ document.addEventListener('change',async e=>{ const el=e.target;
   db.doc('system/backup').onSnapshot(s=>{ S.backup=s.exists?s.data():null; renderAll(); }, ()=>{});
   db.doc('system/recipients').onSnapshot(s=>{ S.recip=s.exists?s.data():null; renderAll(); }, ()=>{});
   db.doc('system/news').onSnapshot(s=>{ S.news=s.exists?s.data():null; if(route==='home'&&!document.querySelector('#bb:hover')) renderAll(); }, ()=>{});
+  db.doc('settings/work').onSnapshot(s=>{ S.work=s.exists?s.data():null; if(route==='home') renderAll(); }, ()=>{});
   db.doc('settings/billboard').onSnapshot(s=>{ S.bbtips=s.exists?s.data():null; if(route==='home') renderAll(); }, ()=>{});
   db.doc('settings/hub').onSnapshot(s=>{ S.hub=s.exists?s.data():null; if(route==='hub') renderAll(); }, ()=>{});
   db.doc('settings/company').onSnapshot(s=>{ S.company=s.exists?s.data():null; renderAll(); }, ()=>{});
