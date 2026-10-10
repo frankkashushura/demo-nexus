@@ -296,7 +296,7 @@
 
   /* ================= sign-in screens ================= */
   const css = `
-  .nxa{position:fixed;inset:0;z-index:200;background:#182340;display:grid;place-items:center;padding:16px;font:14px/1.5 "IBM Plex Sans",system-ui,sans-serif;color:#182340}
+  .nxa{position:fixed;inset:0;z-index:200;background:#182340;display:grid;place-items:center;align-items:safe center;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;font:14px/1.5 "IBM Plex Sans",system-ui,sans-serif;color:#182340}
   .nxa .box{background:#FAFBFC;border-radius:10px;width:min(400px,100%);padding:26px 24px;display:flex;flex-direction:column;gap:12px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
   .nxa .hz{height:8px;margin:-26px -24px 8px;border-radius:10px 10px 0 0;background:repeating-linear-gradient(-45deg,#F2A900 0 12px,#182340 12px 24px)}
   .nxa h1{font:700 30px/1 "Barlow Condensed",Arial,sans-serif;letter-spacing:.04em;margin:0;text-transform:uppercase}
