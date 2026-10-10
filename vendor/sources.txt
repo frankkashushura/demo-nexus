@@ -1,0 +1,3 @@
+# Libraries NEXUS loads from its own site (downloaded by .github/workflows/vendor.yml)
+vendor/pdfjs/pdf.min.mjs https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs
+vendor/pdfjs/pdf.worker.min.mjs https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs
