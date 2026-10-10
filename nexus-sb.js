@@ -412,6 +412,42 @@
       <button class="pri" type="button">Back to sign in</button>`);
     f.querySelector('button').onclick = async () => { await sb.auth.signOut({ scope: 'local' }); location.reload(); };
   }
+  // ---------- NEXUS Cloud: how to pay (set by the platform owner) + "I have paid" notice ----------
+  const PAY_FIELDS = [['price', 'Price'], ['bank', 'Bank transfer'], ['mobile', 'Mobile money'], ['contact', 'Questions'], ['other', 'Other']];
+  async function payHtml(c) {
+    let info = {}; try { const { data } = await sb.rpc('nx_pay_info'); info = data || {}; } catch (_) {}
+    const lines = PAY_FIELDS.filter(([k]) => (info[k] || '').trim()).map(([k, l]) => `<div style="margin:2px 0"><b>${h(l)}:</b> ${h(info[k]).replace(/\n/g, '<br>')}</div>`).join('');
+    return `<div style="background:#EEF3FA;border-radius:6px;padding:10px 12px;font-size:13px;color:#182340">${lines || 'Contact the NEXUS team for payment details.'}
+      <div style="margin-top:4px;opacity:.75">Write <b>${h(c?.name || 'your company name')}</b> as the payment reference.</div></div>
+      ${profile?.role === 'admin' ? `<div data-claim style="display:flex;flex-direction:column;gap:8px">
+        <b style="font-size:13px">After paying, tell us here:</b>
+        <label>Paid by<select name="pm"><option>M-Pesa</option><option>Mixx by Yas (Tigo Pesa)</option><option>Airtel Money</option><option>HaloPesa</option><option>Bank transfer</option><option>Other</option></select></label>
+        <label>Transaction / receipt number<input name="pref" autocomplete="off" placeholder="e.g. QK7H2XYZ12"></label>
+        <label>Amount paid<input name="pamt" autocomplete="off" placeholder="e.g. TZS 600,000"></label>
+        <button class="pri" type="button" data-claimsend>Send payment notice</button>
+        <div class="err" role="status" data-claimmsg></div></div>` : '<p class="small" style="margin:0">Your company administrator makes the payment.</p>'}`;
+  }
+  function payWire(root) {
+    const b = root.querySelector('[data-claimsend]'); if (!b) return;
+    b.onclick = async () => {
+      const q = n => root.querySelector(`[name="${n}"]`).value.trim(), msg = root.querySelector('[data-claimmsg]');
+      if (q('pref').length < 3) { msg.textContent = 'Enter the transaction or receipt number.'; return; }
+      b.disabled = true; b.textContent = 'Sending…';
+      const { error } = await sb.rpc('nx_payment_claim', { method: q('pm'), reference: q('pref'), amount: q('pamt'), note: null });
+      b.disabled = false; b.textContent = 'Send payment notice';
+      if (error) { msg.textContent = error.message; return; }
+      root.querySelector('[data-claim]').innerHTML = '<p style="margin:0"><b>Thank you.</b> The NEXUS team checks the payment and extends your subscription – usually the same working day. You will then be able to sign in again.</p>';
+    };
+  }
+  async function openPay(c) {
+    const w = document.createElement('div'); w.className = 'nxm';
+    w.innerHTML = `<div class="box" style="width:min(460px,100%)"><div style="display:flex;align-items:center;gap:8px"><h2 style="margin:0;font:700 19px var(--f-display,Arial);text-transform:uppercase">Pay for NEXUS</h2><div style="flex:1"></div><button class="btn sm" data-close>Close</button></div><div data-pb class="nxa" style="position:static;background:none;padding:0;display:block"><p>Loading…</p></div></div>`;
+    w.onclick = e => { if (e.target === w || e.target.closest('[data-close]')) w.remove(); };
+    document.body.append(w);
+    const pb = w.querySelector('[data-pb]'); pb.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px">${await payHtml(c)}</div>`; payWire(pb);
+  }
+  window.NX_PAY = c => openPay(c || profile?.company);
+
   function companyWaitScreen(name, company) {
     const f = screen(`<p><b>Thank you${name ? ', ' + h(name.split(' ')[0]) : ''}.</b></p>
       <p>The request for <b>${h(company || 'your company')}</b> has been sent to the NEXUS team. When the company is opened you sign in with your email and password and add your staff.</p>
@@ -426,11 +462,11 @@
       : late ? `The NEXUS subscription of <b>${h(c.name)}</b> ended on ${h(c.paid_until || '')}. Renew to continue – all your records are kept.`
       : `NEXUS is switched off for <b>${h(c.name)}</b>. Contact the NEXUS team.`;
     const f = screen(`<p>${msg}</p>
-      ${late && profile?.role === 'admin' && window.NX_PAY ? '<button class="pri" type="button" data-pay>Pay now</button>' : ''}
+      <div data-paybox></div>
       ${profile?.platform ? '<button class="pri" type="button" data-plat>Open NEXUS Cloud – companies</button>' : ''}
       <button class="lnk" type="button" data-out>Sign out</button>`);
     f.querySelector('[data-out]').onclick = async () => { await sb.auth.signOut({ scope: 'local' }); location.reload(); };
-    f.querySelector('[data-pay]')?.addEventListener('click', () => window.NX_PAY(c));
+    if (late && c) payHtml(c).then(x => { const pb = f.querySelector('[data-paybox]'); if (pb) { pb.style.cssText = 'display:flex;flex-direction:column;gap:10px'; pb.innerHTML = x; payWire(pb); } });
     f.querySelector('[data-plat]')?.addEventListener('click', () => openPlatform());
   }
   function newPasswordScreen(first) {
@@ -483,6 +519,17 @@
     closeScreen();
     sb.auth.onAuthStateChange((ev, s2) => { if (ev === 'SIGNED_OUT') location.reload(); if (s2) session = s2; });
     setTimeout(attachMenu, 300);
+    if (CLOUD && profile.role === 'admin' && profile.company) {
+      const c = profile.company, end = c.status === 'trial' ? c.trial_until : c.paid_until;
+      const left = end ? Math.ceil((Date.parse(end + 'T23:59:59') - Date.now()) / 864e5) : null;
+      if (left != null && left <= 14) setTimeout(() => {
+        const bar = document.createElement('div');
+        bar.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:140;background:#182340;color:#fff;border-radius:8px;padding:10px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:13px;max-width:calc(100% - 24px)';
+        bar.innerHTML = `<span>${left < 0 ? `Your NEXUS ${c.status === 'trial' ? 'trial' : 'subscription'} ended ${-left} day${left === -1 ? '' : 's'} ago – NEXUS closes 7 days after the end date.` : `Your NEXUS ${c.status === 'trial' ? 'free trial' : 'subscription'} ends in ${left} day${left === 1 ? '' : 's'} (${h(end)}).`}</span><button class="btn sm pri" type="button">How to pay</button><button class="btn sm" type="button" aria-label="Close">✕</button>`;
+        const [pay, x] = bar.querySelectorAll('button'); pay.onclick = () => openPay(c); x.onclick = () => bar.remove();
+        document.body.append(bar);
+      }, 1500);
+    }
     if (profile.role === 'admin') {
       // who is waiting for approval – one notification per person (so a new sign-up is always a NEW alert)
       const count = async () => { try { const { data } = await sb.from('profiles').select('user_id,name,email,position,requested_at').eq('pending', true).order('requested_at', { ascending: false }); const L = data || [], sig = L.map(u => u.user_id).join(',');
@@ -777,10 +824,13 @@
     const ST = { pending: 'Waiting for approval', trial: 'Free trial', active: 'Active (paid)', suspended: 'Suspended', closed: 'Closed' };
     const COL = { pending: '#F2A900', trial: '#2E75B6', active: '#2E8B57', suspended: '#C0392B', closed: '#7A869A' };
     const day = (d, n) => { const x = new Date(d || Date.now()); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+    let payInfo = {};
     async function render() {
       const { data, error } = await sb.rpc('nx_companies');
       if (error) { box.innerHTML = `<p>${h(error.message)}</p><button class="btn sm" data-close>Close</button>`; box.querySelector('[data-close]').onclick = () => w.remove(); return; }
       const L = data || [], n = k => L.filter(c => c.status === k).length;
+      const { data: cl } = await sb.rpc('nx_payment_claims'); const claims = cl || [];
+      try { const { data: pi } = await sb.rpc('nx_pay_info'); payInfo = pi || {}; } catch (_) {}
       box.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><h2 style="margin:0;font:700 21px var(--f-display,Arial);text-transform:uppercase">NEXUS Cloud – companies</h2><div style="flex:1"></div><button class="btn sm" data-close>Close</button></div>
         <p class="small muted" style="margin:4px 0 10px">${L.length} companies · ${n('pending')} waiting · ${n('trial')} on trial · ${n('active')} paying · ${n('suspended')} suspended. Only you (platform owner) see this. You never see the companies' records.</p>
         <div class="tbl-wrap"><table><thead><tr><th>Company</th><th>Contact</th><th>Status</th><th>Users</th><th>Trial until</th><th>Paid until</th><th>Seats</th><th>Notes</th><th></th></tr></thead><tbody>
@@ -794,10 +844,24 @@
           <td><input type="number" min="1" max="999" data-f="seats" value="${h(c.seats)}" style="width:64px" aria-label="Seats"></td>
           <td><input data-f="notes" value="${h(c.notes || '')}" placeholder="e.g. invoice 012, paid M-Pesa" aria-label="Notes"></td>
           <td style="white-space:nowrap">${c.status === 'pending' ? `<button class="btn sm pri" data-quick="trial">Approve – 30-day trial</button> ` : ''}${c.status !== 'pending' ? `<button class="btn sm" data-quick="year">+1 year paid</button> ` : ''}<button class="btn sm pri" data-save>Save</button></td></tr>`).join('') || '<tr><td colspan="9">No companies yet. Companies appear here when someone chooses “Register a new company” on the sign-in page.</td></tr>'}
-        </tbody></table></div><p class="small" data-msg role="status"></p>`;
+        </tbody></table></div><p class="small" data-msg role="status"></p>
+        <details ${claims.some(x => x.status === 'new') ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">Payment notices from companies (${claims.filter(x => x.status === 'new').length} new)</summary>
+          <p class="small muted">Check each one against your bank / mobile money statement. If the money arrived: <b>Confirm</b>, then give the company <b>+1 year paid</b> (or the paid period) above.</p>
+          <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Company</th><th>By</th><th>Paid by</th><th>Reference</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>
+          ${claims.map(x => `<tr><td class="small">${h(String(x.created_at).slice(0, 16).replace('T', ' '))}</td><td>${h(x.company)}</td><td class="small">${h(x.who || '')}</td><td class="small">${h(x.method || '')}</td><td style="font-family:monospace">${h(x.reference)}</td><td class="small">${h(x.amount || '')}</td>
+            <td><b style="color:${x.status === 'new' ? '#F2A900' : x.status === 'confirmed' ? '#2E8B57' : '#C0392B'}">${h(x.status)}</b></td>
+            <td style="white-space:nowrap">${x.status === 'new' ? `<button class="btn sm pri" data-pclaim="${x.id}:confirmed">Confirm</button> <button class="btn sm" data-pclaim="${x.id}:rejected">Reject</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="8">No payment notices yet.</td></tr>'}
+          </tbody></table></div></details>
+        <details><summary style="cursor:pointer;font-weight:700">How companies pay you (shown on their payment screen)</summary>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-top:8px">
+          ${PAY_FIELDS.map(([k, l]) => `<label class="small" style="display:flex;flex-direction:column;gap:3px"><b>${h(l)}</b><textarea data-pi="${k}" rows="3" placeholder="${h({ price: 'e.g. TZS 600,000 per year (up to 25 users)', bank: 'Bank name, account name, account number, branch', mobile: 'e.g. M-Pesa Lipa Namba / till number and name', contact: 'Phone / WhatsApp / email for payment questions', other: 'Anything else (e.g. invoices on request)' }[k])}">${h(payInfo[k] || '')}</textarea></label>`).join('')}
+          </div><button class="btn sm pri" data-savepay style="margin-top:8px">Save payment details</button></details>`;
+      box.querySelector('[data-savepay]').onclick = async () => { const v = {}; box.querySelectorAll('[data-pi]').forEach(t => { v[t.dataset.pi] = t.value.trim(); }); const { error } = await sb.rpc('nx_pay_info_set', { v }); const el = box.querySelector('[data-msg]'); if (el) el.textContent = error ? error.message : 'Payment details saved.'; if (!error) payInfo = v; };
       box.querySelector('[data-close]').onclick = () => w.remove();
     }
     box.addEventListener('click', async e => {
+      const cb = e.target.closest('[data-pclaim]');
+      if (cb) { const [id, st] = cb.dataset.pclaim.split(':'); const { error } = await sb.rpc('nx_payment_claim_set', { cid: +id, new_status: st }); if (!error) await render(); const el = box.querySelector('[data-msg]'); if (el) el.textContent = error ? error.message : (st === 'confirmed' ? 'Payment confirmed – now extend the company\'s paid period above.' : 'Payment notice rejected.'); return; }
       const tr = e.target.closest('tr[data-cid]'); const say = t => { const el = box.querySelector('[data-msg]'); if (el) el.textContent = t; };
       if (!tr) return; const g = k => tr.querySelector(`[data-f="${k}"]`);
       const q = e.target.closest('[data-quick]')?.dataset.quick;
