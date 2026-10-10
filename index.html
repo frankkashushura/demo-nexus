@@ -5444,11 +5444,11 @@ function pageHome(){
     <div class="hh-photo" role="img" aria-label="NHC Clock Tower building, built by the company"></div>
     <div class="hh-diamond d1"></div><div class="hh-diamond d2"></div><div class="hh-diamond d3"></div>
     <div class="hh-text">
-      <div class="hh-brand"><img alt="the company logo" src="${LOGO}"><span>THE COMPANY<br><em>${esc(c.crb_building)} · ${esc(c.crb_civil)}</em></span></div>
+      <div class="hh-brand"><img alt="the company logo" src="${LOGO}"><span>${esc((c.name||'').toUpperCase())}${(c.crb_building||c.crb_civil)?'<br><em>'+esc([c.crb_building,c.crb_civil].filter(Boolean).join(' · '))+'</em>':''}</span></div>
       <p class="hh-eyebrow">${greet}${me.name?', '+esc(me.name.split(' ')[0]):''} · ${esc(new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'}))}</p>
       <h1 class="hh-title">NEXUS<br><span style="font-size:.5em;letter-spacing:.04em">Construction Manager</span></h1>
       <p class="hh-slogan">Where every project connects.</p>
-      <p class="hh-sub">From tender to handover, one system for the whole the company team.</p>
+      <p class="hh-sub">From tender to handover, one system for your whole team.</p>
       <div class="toolbar">
         <button class="btn pri" data-go="tenders">Open Tender Radar</button>
       </div>
