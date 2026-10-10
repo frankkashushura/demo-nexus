@@ -828,15 +828,16 @@
     const ST = { pending: 'Waiting for approval', trial: 'Free trial', active: 'Active (paid)', suspended: 'Suspended', closed: 'Closed' };
     const COL = { pending: '#F2A900', trial: '#2E75B6', active: '#2E8B57', suspended: '#C0392B', closed: '#7A869A' };
     const day = (d, n) => { const x = new Date(d || Date.now()); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
-    let payInfo = {};
+    let payInfo = {}, ownOpen = false;
     async function render() {
       const { data, error } = await sb.rpc('nx_companies');
       if (error) { box.innerHTML = `<p>${h(error.message)}</p><button class="btn sm" data-close>Close</button>`; box.querySelector('[data-close]').onclick = () => w.remove(); return; }
       const L = data || [], n = k => L.filter(c => c.status === k).length;
       const { data: cl } = await sb.rpc('nx_payment_claims'); const claims = cl || [];
       try { const { data: pi } = await sb.rpc('nx_pay_info'); payInfo = pi || {}; } catch (_) {}
+      const { data: ow, error: oe } = await sb.rpc('nx_owners'); const owners = ow || [];
       box.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><h2 style="margin:0;font:700 21px var(--f-display,Arial);text-transform:uppercase">NEXUS Cloud – companies</h2><div style="flex:1"></div><button class="btn sm" data-close>Close</button></div>
-        <p class="small muted" style="margin:4px 0 10px">${L.length} companies · ${n('pending')} waiting · ${n('trial')} on trial · ${n('active')} paying · ${n('suspended')} suspended. Only you (platform owner) see this. You never see the companies' records.</p>
+        <p class="small muted" style="margin:4px 0 10px">${L.length} companies · ${n('pending')} waiting · ${n('trial')} on trial · ${n('active')} paying · ${n('suspended')} suspended. Only NEXUS owners see this. Owners never see the companies' records.</p>
         <div class="tbl-wrap"><table><thead><tr><th>Company</th><th>Contact</th><th>Status</th><th>Users</th><th>Trial until</th><th>Paid until</th><th>Seats</th><th>Notes</th><th></th></tr></thead><tbody>
         ${L.map(c => `<tr data-cid="${h(c.id)}">
           <td><b>${h(c.name)}</b><div class="small muted">${h(c.country || '')} · since ${h(String(c.created_at).slice(0, 10))}</div>${c.open ? '<span class="small" style="color:#2E8B57">● open</span>' : '<span class="small" style="color:#C0392B">● closed</span>'}</td>
@@ -859,11 +860,37 @@
         <details><summary style="cursor:pointer;font-weight:700">How companies pay you (shown on their payment screen)</summary>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-top:8px">
           ${PAY_FIELDS.map(([k, l]) => `<label class="small" style="display:flex;flex-direction:column;gap:3px"><b>${h(l)}</b><textarea data-pi="${k}" rows="3" placeholder="${h({ price: 'e.g. TZS 600,000 per year (up to 25 users)', bank: 'Bank name, account name, account number, branch', mobile: 'e.g. M-Pesa Lipa Namba / till number and name', contact: 'Phone / WhatsApp / email for payment questions', other: 'Anything else (e.g. invoices on request)' }[k])}">${h(payInfo[k] || '')}</textarea></label>`).join('')}
-          </div><button class="btn sm pri" data-savepay style="margin-top:8px">Save payment details</button></details>`;
+          </div><button class="btn sm pri" data-savepay style="margin-top:8px">Save payment details</button></details>
+        <details ${ownOpen ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">Owner team (${owners.length} people can open this panel)</summary>
+          <p class="small muted">Owners control every company: approve, close, extend, payments. Add only people you fully trust. The person must already have a NEXUS login (any company); they see this panel after signing in again.</p>
+          ${oe ? `<p class="small" style="color:#C0392B">The owner team needs the database update v302 (62_owner_team.sql).</p>` : `<div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Their company</th><th></th></tr></thead><tbody>
+          ${owners.map(o => `<tr><td><b>${h(o.name || '')}</b>${o.is_me ? ' <span class="small muted">(you)</span>' : ''}</td><td class="small">${h(o.email || '')}</td><td class="small">${h(o.company || '–')}</td>
+            <td>${owners.length > 1 ? `<button class="btn sm" data-orm="${h(o.user_id)}">${o.is_me ? 'Leave owner team' : 'Remove'}</button>` : '<span class="small muted">last owner</span>'}</td></tr>`).join('')}
+          </tbody></table></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input type="email" data-oadd placeholder="Email of their NEXUS login" aria-label="Email of the new owner" style="flex:1;min-width:220px"><button class="btn sm pri" data-oaddbtn>Add owner</button></div><p class="small" data-omsg role="status"></p>`}
+        </details>`;
       box.querySelector('[data-savepay]').onclick = async () => { const v = {}; box.querySelectorAll('[data-pi]').forEach(t => { v[t.dataset.pi] = t.value.trim(); }); const { error } = await sb.rpc('nx_pay_info_set', { v }); const el = box.querySelector('[data-msg]'); if (el) el.textContent = error ? error.message : 'Payment details saved.'; if (!error) payInfo = v; };
       box.querySelector('[data-close]').onclick = () => w.remove();
     }
     box.addEventListener('click', async e => {
+      const say0 = t => { const el = box.querySelector('[data-omsg]') || box.querySelector('[data-msg]'); if (el) el.textContent = t; };
+      if (e.target.closest('[data-oaddbtn],[data-orm]')) ownOpen = true;
+      if (e.target.closest('[data-oaddbtn]')) {
+        const em = (box.querySelector('[data-oadd]')?.value || '').trim();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { say0('Type the email of the person\'s NEXUS login.'); return; }
+        const { data: nm, error } = await sb.rpc('nx_owner_add', { owner_email: em });
+        if (error) { say0(error.message); return; }
+        await render(); say0(`${nm} is now a NEXUS owner (they see this panel after signing in again).`); return;
+      }
+      const orm = e.target.closest('[data-orm]');
+      if (orm) {
+        if (!orm.dataset.sure) { orm.dataset.sure = '1'; orm.textContent = 'Sure? Click again'; orm.classList.add('pri'); return; }
+        const { error } = await sb.rpc('nx_owner_remove', { uid: orm.dataset.orm });
+        if (error) { say0(error.message); return; }
+        const meId = (await sb.auth.getUser()).data?.user?.id;
+        if (orm.dataset.orm === meId) { w.remove(); if (window.toast) window.toast('You left the NEXUS owner team.'); return; }
+        await render(); say0('Owner rights removed. Their login and company data are unchanged.'); return;
+      }
       const cb = e.target.closest('[data-pclaim]');
       if (cb) { const [id, st] = cb.dataset.pclaim.split(':'); const { error } = await sb.rpc('nx_payment_claim_set', { cid: +id, new_status: st }); if (!error) await render(); const el = box.querySelector('[data-msg]'); if (el) el.textContent = error ? error.message : (st === 'confirmed' ? 'Payment confirmed – now extend the company\'s paid period above.' : 'Payment notice rejected.'); return; }
       const tr = e.target.closest('tr[data-cid]'); const say = t => { const el = box.querySelector('[data-msg]'); if (el) el.textContent = t; };
